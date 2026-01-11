@@ -5,7 +5,7 @@ export default async function handler(req, res) {
 
   try {
     const webhook = req.body;
-    const eventType = webhook.type; // Whop uses 'type' not 'action'
+    const eventType = webhook.type;
     
     console.log('Webhook received:', eventType);
     
@@ -13,6 +13,7 @@ export default async function handler(req, res) {
       const membership = webhook.data;
       const licenseKey = `WHP-${membership.id.substring(4, 12).toUpperCase()}`;
       
+      // Store in Upstash
       const licenseData = JSON.stringify({
         status: 'active',
         productId: membership.product.id,
@@ -24,12 +25,24 @@ export default async function handler(req, res) {
       
       console.log('Creating license:', licenseKey);
       
-      const response = await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/set/license:${licenseKey}/${encodeURIComponent(licenseData)}`, {
+      await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/set/license:${licenseKey}/${encodeURIComponent(licenseData)}`, {
         headers: { 'Authorization': `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` }
       });
       
-      const result = await response.json();
-      console.log('Upstash result:', result);
+      // Send license key back to Whop
+      const whopApiUrl = `https://api.whop.com/api/v2/memberships/${membership.id}`;
+      await fetch(whopApiUrl, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${process.env.WHOP_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          license_key: licenseKey
+        })
+      });
+      
+      console.log('License sent to Whop:', licenseKey);
       
       return res.status(200).json({ success: true, licenseKey });
     }
