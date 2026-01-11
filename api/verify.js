@@ -6,8 +6,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    console.log('Checking license:', license);
-    
     const response = await fetch('https://api.whop.com/api/v2/memberships', {
       headers: {
         'Authorization': `Bearer ${process.env.WHOP_API_KEY}`,
@@ -15,35 +13,55 @@ export default async function handler(req, res) {
       }
     });
 
-    console.log('Whop API status:', response.status);
-    
     if (!response.ok) {
-      const errorText = await response.text();
-      return res.status(200).json({ 
+      return res.status(500).json({ 
         valid: false, 
-        error: 'API error',
-        status: response.status,
-        details: errorText
+        error: 'API error'
       });
     }
     
-    const data = await response.json();
-    console.log('Raw response:', JSON.stringify(data, null, 2));
+    const result = await response.json();
     
-    // Return the raw data so we can see the structure
+    // Check if data exists and is an array
+    if (!result.data || !Array.isArray(result.data)) {
+      return res.status(500).json({ 
+        valid: false, 
+        error: 'Invalid API response'
+      });
+    }
+    
+    // Search for matching license key
+    for (const membership of result.data) {
+      if (membership.license_key === license) {
+        const isValid = membership.valid === true && 
+                       (membership.status === 'completed' || 
+                        membership.status === 'active' ||
+                        membership.status === 'trialing');
+        
+        return res.status(200).json({
+          valid: isValid,
+          status: membership.status,
+          userId: membership.user,
+          productId: membership.product,
+          expiresAt: membership.expires_at,
+          membershipId: membership.id,
+          email: membership.email
+        });
+      }
+    }
+    
+    // License not found
     return res.status(200).json({ 
       valid: false, 
-      debug: true,
-      rawResponse: data,
-      searchedLicense: license
+      status: 'not_found',
+      message: 'License key not found'
     });
     
   } catch (error) {
     console.error('Validation error:', error.message);
     return res.status(500).json({ 
       valid: false, 
-      error: 'Validation failed',
-      details: error.message 
+      error: 'Validation failed'
     });
   }
 }
