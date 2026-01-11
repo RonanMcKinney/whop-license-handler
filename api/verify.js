@@ -28,42 +28,14 @@ export default async function handler(req, res) {
     }
     
     const data = await response.json();
-    console.log('Memberships found:', data.length);
+    console.log('Raw response:', JSON.stringify(data, null, 2));
     
-    // DEBUG: Show all license keys found
-    const allLicenseKeys = data.map(m => ({
-      membershipId: m.id,
-      licenseKey: m.license_key,
-      status: m.valid ? 'active' : 'inactive'
-    }));
-    
-    console.log('All license keys:', JSON.stringify(allLicenseKeys, null, 2));
-    
-    // Search for matching license key
-    if (Array.isArray(data)) {
-      for (const membership of data) {
-        if (membership.license_key === license) {
-          const isValid = membership.valid === true;
-          
-          return res.status(200).json({
-            valid: isValid,
-            status: isValid ? 'active' : 'inactive',
-            userId: membership.user?.id,
-            productId: membership.product?.id,
-            expiresAt: membership.expires_at,
-            membershipId: membership.id
-          });
-        }
-      }
-    }
-    
-    // Return debug info
+    // Return the raw data so we can see the structure
     return res.status(200).json({ 
       valid: false, 
-      status: 'not_found',
-      message: 'License key not found',
-      searchedLicense: license,
-      availableLicenses: allLicenseKeys
+      debug: true,
+      rawResponse: data,
+      searchedLicense: license
     });
     
   } catch (error) {
