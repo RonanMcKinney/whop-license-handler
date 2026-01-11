@@ -35,8 +35,8 @@ export default async function handler(req, res) {
       
       console.log('✓ Stored in Upstash');
       
-      // Send license key back to Whop
-      console.log('Updating Whop membership with license key...');
+      // Send license key to Whop via METADATA
+      console.log('Updating Whop membership metadata with license key...');
       
       const whopApiUrl = `https://api.whop.com/api/v2/memberships/${membership.id}`;
       const whopResponse = await fetch(whopApiUrl, {
@@ -46,7 +46,10 @@ export default async function handler(req, res) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          license_key: licenseKey
+          metadata: {
+            license_key: licenseKey,
+            activated_at: new Date().toISOString()
+          }
         })
       });
 
@@ -56,7 +59,7 @@ export default async function handler(req, res) {
       console.log('Whop API response:', JSON.stringify(whopResult, null, 2));
       
       if (whopResponse.ok) {
-        console.log('✓ License key sent to Whop successfully');
+        console.log('✓ License key stored in Whop metadata successfully');
       } else {
         console.error('✗ Failed to update Whop:', whopResult);
       }
