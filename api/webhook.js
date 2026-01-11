@@ -5,48 +5,63 @@ export default async function handler(req, res) {
 
   try {
     const webhook = req.body;
+    const eventType = webhook.type; // Whop uses 'type' not 'action'
     
-    // LOG EVERYTHING
-    console.log('=== WEBHOOK RECEIVED ===');
-    console.log('Full webhook data:', JSON.stringify(webhook, null, 2));
-    console.log('Action:', webhook.action);
-    console.log('========================');
+    console.log('Webhook received:', eventType);
     
-    if (webhook.action === 'membership.activated' || webhook.action === 'membership.went_valid') {
+    if (eventType === 'membership.activated' || eventType === 'membership.went_valid') {
       const membership = webhook.data;
-      console.log('Membership data:', membership);
-      
-      const licenseKey = `WHP-${membership.id.substring(0, 8).toUpperCase()}`;
-      console.log('Generated license key:', licenseKey);
+      const licenseKey = `WHP-${membership.id.substring(4, 12).toUpperCase()}`;
       
       const licenseData = JSON.stringify({
         status: 'active',
-        productId: membership.product_id,
+        productId: membership.product.id,
         membershipId: membership.id,
-        userId: membership.user_id,
+        userId: membership.user.id,
+        username: membership.user.username,
         activatedAt: new Date().toISOString()
       });
       
-      console.log('Storing license data:', licenseData);
+      console.log('Creating license:', licenseKey);
       
-      const upstashUrl = `${process.env.UPSTASH_REDIS_REST_URL}/set/license:${licenseKey}/${encodeURIComponent(licenseData)}`;
-      console.log('Upstash URL:', upstashUrl);
-      
-      const response = await fetch(upstashUrl, {
+      const response = await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/set/license:${licenseKey}/${encodeURIComponent(licenseData)}`, {
         headers: { 'Authorization': `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` }
       });
       
-      console.log('Upstash response status:', response.status);
-      const responseData = await response.json();
-      console.log('Upstash response:', responseData);
+      const result = await response.json();
+      console.log('Upstash result:', result);
       
       return res.status(200).json({ success: true, licenseKey });
     }
     
-    return res.status(200).json({ received: true, action: webhook.action });
+    if (eventType === 'membership.cancelled' || eventType === 'membership.went_invalid') {
+      const membership = webhook.data;
+      const licenseKey = `WHP-${membership.id.substring(4, 12).toUpperCase()}`;
+      
+      const getResp = await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/get/license:${licenseKey}`, {
+        headers: { 'Authorization': `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` }
+      });
+      
+      const getData = await getResp.json();
+      if (getData.result) {
+        const licenseData = JSON.parse(getData.result);
+        licenseData.status = 'inactive';
+        licenseData.cancelledAt = new Date().toISOString();
+        
+        await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/set/license:${licenseKey}/${encodeURIComponent(JSON.stringify(licenseData))}`, {
+          headers: { 'Authorization': `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` }
+        });
+        
+        console.log('License deactivated:', licenseKey);
+      }
+      
+      return res.status(200).json({ success: true });
+    }
+    
+    return res.status(200).json({ received: true, type: eventType });
     
   } catch (error) {
-    console.error('ERROR:', error);
+    console.error('Error:', error);
     return res.status(500).json({ error: error.message });
   }
 }
