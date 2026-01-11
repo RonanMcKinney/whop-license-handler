@@ -1,73 +1,40 @@
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  const { license } = req.query;
+  
+  if (!license) {
+    return res.status(400).json({ valid: false, error: 'License key required' });
   }
 
   try {
-    const webhook = req.body;
-    const eventType = webhook.type;
-    
-    console.log('=== WEBHOOK RECEIVED ===');
-    console.log('Event type:', eventType);
-    
-    if (eventType === 'membership.activated' || eventType === 'membership.went_valid') {
-      const membership = webhook.data;
-      const licenseKey = `WHP-${membership.id.substring(4, 12).toUpperCase()}`;
-      
-      console.log('Membership ID:', membership.id);
-      console.log('Generated license key:', licenseKey);
-      
-      // Store in Upstash
-      const licenseData = JSON.stringify({
-        status: 'active',
-        productId: membership.product.id,
-        membershipId: membership.id,
-        userId: membership.user.id,
-        username: membership.user.username,
-        activatedAt: new Date().toISOString()
-      });
-      
-      console.log('Storing in Upstash...');
-      
-      await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/set/license:${licenseKey}/${encodeURIComponent(licenseData)}`, {
-        headers: { 'Authorization': `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` }
-      });
-      
-      console.log('✓ License stored successfully in Upstash');
-      
-      return res.status(200).json({ success: true, licenseKey });
-    }
-    
-    if (eventType === 'membership.cancelled' || eventType === 'membership.went_invalid') {
-      const membership = webhook.data;
-      const licenseKey = `WHP-${membership.id.substring(4, 12).toUpperCase()}`;
-      
-      console.log('Deactivating license:', licenseKey);
-      
-      const getResp = await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/get/license:${licenseKey}`, {
-        headers: { 'Authorization': `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` }
-      });
-      
-      const getData = await getResp.json();
-      if (getData.result) {
-        const licenseData = JSON.parse(getData.result);
-        licenseData.status = 'inactive';
-        licenseData.cancelledAt = new Date().toISOString();
-        
-        await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/set/license:${licenseKey}/${encodeURIComponent(JSON.stringify(licenseData))}`, {
-          headers: { 'Authorization': `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` }
-        });
-        
-        console.log('✓ License deactivated');
+    // Check Whop API for membership validity
+    const response = await fetch(`https://api.whop.com/api/v5/memberships?license_key=${license}`, {
+      headers: {
+        'Authorization': `Bearer ${process.env.WHOP_API_KEY}`,
+        'Content-Type': 'application/json'
       }
+    });
+
+    const data = await response.json();
+    
+    if (data.data && data.data.length > 0) {
+      const membership = data.data[0];
       
-      return res.status(200).json({ success: true });
+      // Check if membership is active
+      if (membership.status === 'active' || membership.valid === true) {
+        return res.status(200).json({
+          valid: true,
+          status: 'active',
+          userId: membership.user.id,
+          productId: membership.product.id,
+          expiresAt: membership.expires_at
+        });
+      }
     }
     
-    return res.status(200).json({ received: true, type: eventType });
+    return res.status(200).json({ valid: false, status: 'inactive' });
     
   } catch (error) {
-    console.error('ERROR:', error);
-    return res.status(500).json({ error: error.message });
+    console.error('Validation error:', error);
+    return res.status(500).json({ valid: false, error: 'Validation failed' });
   }
 }
