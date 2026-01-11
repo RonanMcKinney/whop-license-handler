@@ -8,7 +8,6 @@ export default async function handler(req, res) {
   try {
     console.log('Checking license:', license);
     
-    // Use v2 API which works with Company API keys
     const response = await fetch('https://api.whop.com/api/v2/memberships', {
       headers: {
         'Authorization': `Bearer ${process.env.WHOP_API_KEY}`,
@@ -20,7 +19,6 @@ export default async function handler(req, res) {
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.log('Whop API error:', errorText);
       return res.status(200).json({ 
         valid: false, 
         error: 'API error',
@@ -30,13 +28,20 @@ export default async function handler(req, res) {
     }
     
     const data = await response.json();
-    console.log('Found memberships:', data.length);
+    console.log('Memberships found:', data.length);
     
-    // Search through memberships for matching license key
+    // DEBUG: Show all license keys found
+    const allLicenseKeys = data.map(m => ({
+      membershipId: m.id,
+      licenseKey: m.license_key,
+      status: m.valid ? 'active' : 'inactive'
+    }));
+    
+    console.log('All license keys:', JSON.stringify(allLicenseKeys, null, 2));
+    
+    // Search for matching license key
     if (Array.isArray(data)) {
       for (const membership of data) {
-        console.log('Checking membership:', membership.id, 'License:', membership.license_key);
-        
         if (membership.license_key === license) {
           const isValid = membership.valid === true;
           
@@ -52,11 +57,13 @@ export default async function handler(req, res) {
       }
     }
     
+    // Return debug info
     return res.status(200).json({ 
       valid: false, 
       status: 'not_found',
       message: 'License key not found',
-      searchedLicense: license
+      searchedLicense: license,
+      availableLicenses: allLicenseKeys
     });
     
   } catch (error) {
