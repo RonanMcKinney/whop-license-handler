@@ -31,47 +31,31 @@ export default async function handler(req, res) {
       }
     );
 
-    if (!response.ok) {
-      // License not found or invalid
-      if (response.status === 404) {
-        return res.status(200).json({
-          valid: false,
-          status: 'not_found',
-          message: 'License key not found'
-        });
-      }
-      
-      // Other API errors
-      return res.status(200).json({
-        valid: false,
-        status: 'error',
-        message: 'Validation failed'
-      });
+    const responseText = await response.text();
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch {
+      responseData = responseText;
     }
 
-    const membership = await response.json();
-    
-    // Check if membership is valid and active
-    const isValid = membership.valid === true && 
-                   (membership.status === 'active' || 
-                    membership.status === 'completed' ||
-                    membership.status === 'trialing');
-    
+    // DIAGNOSTIC: Show everything
     return res.status(200).json({
-      valid: isValid,
-      status: membership.status,
-      userId: membership.user,
-      productId: membership.product,
-      expiresAt: membership.expires_at,
-      email: membership.email,
-      licenseKey: membership.license_key
+      diagnostic: true,
+      httpStatus: response.status,
+      httpStatusText: response.statusText,
+      responseBody: responseData,
+      requestUrl: `https://api.whop.com/api/v2/memberships/${license}/validate_license`,
+      apiKeyPrefix: WHOP_API_KEY.substring(0, 10) + '...',
+      note: 'This shows raw API response for debugging'
     });
     
   } catch (error) {
     return res.status(200).json({ 
       valid: false,
       status: 'error',
-      message: 'Validation error'
+      message: 'Validation error',
+      errorDetails: error.message
     });
   }
 }
