@@ -1,15 +1,15 @@
-javascript
-// api/reset-metadata.js
 export default async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json');
+  
   const PAID_PRODUCT_ID = 'prod_1vgh0MwjNAYGN';
   const WHOP_API_KEY = process.env.WHOP_API_KEY;
 
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed. Use GET request.' });
+  if (!WHOP_API_KEY) {
+    return res.status(500).json({ error: 'WHOP_API_KEY not configured' });
   }
 
   try {
-    // Step 1: Fetch all memberships
+    // Fetch memberships
     const response = await fetch('https://api.whop.com/api/v2/memberships?per=100', {
       headers: {
         'Authorization': `Bearer ${WHOP_API_KEY}`,
@@ -18,59 +18,80 @@ export default async function handler(req, res) {
     });
 
     if (!response.ok) {
-      return res.status(500).json({ error: `Failed to fetch: ${response.status}` });
+      const errorText = await response.text();
+      return res.status(500).json({ 
+        error: 'Failed to fetch memberships',
+        details: errorText,
+        status: response.status
+      });
     }
 
     const result = await response.json();
     
-    // Step 2: Filter for paid product
+    if (!result.data) {
+      return res.status(500).json({ error: 'No data in response' });
+    }
+
+    // Filter for paid product
     const paidMemberships = result.data.filter(m => m.product === PAID_PRODUCT_ID);
 
     if (paidMemberships.length === 0) {
-      return res.status(200).json({ message: 'No paid memberships found.' });
+      return res.status(200).json({ 
+        message: 'No paid memberships found',
+        totalMemberships: result.data.length
+      });
     }
 
-    // Step 3: Reset metadata for each
-    let successCount = 0;
-    let details = [];
-
+    // Reset metadata
+    const results = [];
+    
     for (const membership of paidMemberships) {
-      const patchResponse = await fetch(
-        `https://api.whop.com/api/v2/memberships/${membership.id}`, 
-        {
-          method: 'PATCH',
-          headers: {
-            'Authorization': `Bearer ${WHOP_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ metadata: {} })
-        }
-      );
+      try {
+        const patchResponse = await fetch(
+          `https://api.whop.com/api/v2/memberships/${membership.id}`, 
+          {
+            method: 'PATCH',
+            headers: {
+              'Authorization': `Bearer ${WHOP_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ metadata: {} })
+          }
+        );
 
-      if (patchResponse.ok) {
-        details.push({ license: membership.license_key, status: 'SUCCESS' });
-        successCount++;
-      } else {
-        details.push({ license: membership.license_key, status: 'FAILED' });
+        results.push({
+          license: membership.license_key,
+          membershipId: membership.id,
+          success: patchResponse.ok,
+          status: patchResponse.status
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+      } catch (err) {
+        results.push({
+          license: membership.license_key,
+          success: false,
+          error: err.message
+        });
       }
-
-      await new Promise(resolve => setTimeout(resolve, 500));
     }
+
+    const successCount = results.filter(r => r.success).length;
 
     return res.status(200).json({
-      success: true,
-      summary: {
-        totalProcessed: paidMemberships.length,
-        successful: successCount
-      },
-      details: details,
-      message: '🎉 Metadata reset complete!',
-      testUrls: paidMemberships.slice(0, 3).map(m => 
-        `https://whop-license-handler.vercel.app/api/verify?license=${m.license_key}`
-      )
+      message: 'Metadata reset completed',
+      totalProcessed: paidMemberships.length,
+      successful: successCount,
+      failed: paidMemberships.length - successCount,
+      results: results
     });
 
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ 
+      error: 'Fatal error',
+      message: error.message,
+      stack: error.stack
+    });
   }
 }
