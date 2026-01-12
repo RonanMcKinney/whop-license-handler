@@ -9,46 +9,42 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Fetch memberships
-    const response = await fetch('https://api.whop.com/api/v2/memberships?per=100', {
-      headers: {
-        'Authorization': `Bearer ${WHOP_API_KEY}`,
-        'Content-Type': 'application/json'
+    // Step 1: Get memberships using product_ids parameter (as Whop instructed)
+    const response = await fetch(
+      `https://api.whop.com/api/v2/memberships?product_ids=${PAID_PRODUCT_ID}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${WHOP_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
       }
-    });
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
       return res.status(500).json({ 
         error: 'Failed to fetch memberships',
-        details: errorText,
-        status: response.status
+        status: response.status,
+        details: errorText
       });
     }
 
     const result = await response.json();
     
-    if (!result.data) {
-      return res.status(500).json({ error: 'No data in response' });
-    }
-
-    // Filter for paid product
-    const paidMemberships = result.data.filter(m => m.product === PAID_PRODUCT_ID);
-
-    if (paidMemberships.length === 0) {
+    if (!result.data || result.data.length === 0) {
       return res.status(200).json({ 
-        message: 'No paid memberships found',
-        totalMemberships: result.data.length
+        message: 'No memberships found for this product',
+        productId: PAID_PRODUCT_ID
       });
     }
 
-    // Reset metadata
+    // Step 2: Reset metadata for each membership
     const results = [];
     
-    for (const membership of paidMemberships) {
+    for (const membership of result.data) {
       try {
         const patchResponse = await fetch(
-          `https://api.whop.com/api/v2/memberships/${membership.id}`, 
+          `https://api.whop.com/api/v2/memberships/${membership.id}`,
           {
             method: 'PATCH',
             headers: {
@@ -59,11 +55,20 @@ export default async function handler(req, res) {
           }
         );
 
+        const responseText = await patchResponse.text();
+        let responseData;
+        try {
+          responseData = JSON.parse(responseText);
+        } catch {
+          responseData = responseText;
+        }
+
         results.push({
           license: membership.license_key,
           membershipId: membership.id,
           success: patchResponse.ok,
-          status: patchResponse.status
+          status: patchResponse.status,
+          response: patchResponse.ok ? 'SUCCESS' : responseData
         });
 
         await new Promise(resolve => setTimeout(resolve, 300));
@@ -71,6 +76,7 @@ export default async function handler(req, res) {
       } catch (err) {
         results.push({
           license: membership.license_key,
+          membershipId: membership.id,
           success: false,
           error: err.message
         });
@@ -78,13 +84,18 @@ export default async function handler(req, res) {
     }
 
     const successCount = results.filter(r => r.success).length;
+    const failedResults = results.filter(r => !r.success);
 
     return res.status(200).json({
-      message: 'Metadata reset completed',
-      totalProcessed: paidMemberships.length,
+      message: successCount > 0 ? 'Metadata reset completed!' : 'All updates failed',
+      totalProcessed: result.data.length,
       successful: successCount,
-      failed: paidMemberships.length - successCount,
-      results: results
+      failed: result.data.length - successCount,
+      results: results,
+      failedDetails: failedResults.length > 0 ? failedResults : undefined,
+      note: failedResults.length > 0 
+        ? 'Check that your API key has both member:manage AND member:basic:read permissions'
+        : 'All metadata cleared successfully!'
     });
 
   } catch (error) {
