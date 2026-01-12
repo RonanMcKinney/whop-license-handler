@@ -9,9 +9,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Step 1: Get memberships using product_ids parameter (as Whop instructed)
+    // Step 1: Fetch memberships - CORRECT URL (no /api)
     const response = await fetch(
-      `https://api.whop.com/api/v2/memberships?product_ids=${PAID_PRODUCT_ID}`,
+      `https://api.whop.com/v2/memberships?product_ids=${PAID_PRODUCT_ID}`,
       {
         headers: {
           'Authorization': `Bearer ${WHOP_API_KEY}`,
@@ -38,13 +38,13 @@ export default async function handler(req, res) {
       });
     }
 
-    // Step 2: Reset metadata for each membership
+    // Step 2: Reset metadata - CORRECT URL (no /api)
     const results = [];
     
     for (const membership of result.data) {
       try {
         const patchResponse = await fetch(
-          `https://api.whop.com/api/v2/memberships/${membership.id}`,
+          `https://api.whop.com/v2/memberships/${membership.id}`,
           {
             method: 'PATCH',
             headers: {
@@ -84,25 +84,19 @@ export default async function handler(req, res) {
     }
 
     const successCount = results.filter(r => r.success).length;
-    const failedResults = results.filter(r => !r.success);
 
     return res.status(200).json({
-      message: successCount > 0 ? 'Metadata reset completed!' : 'All updates failed',
+      message: successCount > 0 ? '🎉 Metadata reset successful!' : 'All updates failed',
       totalProcessed: result.data.length,
       successful: successCount,
       failed: result.data.length - successCount,
-      results: results,
-      failedDetails: failedResults.length > 0 ? failedResults : undefined,
-      note: failedResults.length > 0 
-        ? 'Check that your API key has both member:manage AND member:basic:read permissions'
-        : 'All metadata cleared successfully!'
+      results: results
     });
 
   } catch (error) {
     return res.status(500).json({ 
       error: 'Fatal error',
-      message: error.message,
-      stack: error.stack
+      message: error.message
     });
   }
 }
