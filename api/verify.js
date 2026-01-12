@@ -1,6 +1,7 @@
 export default async function handler(req, res) {
   const { license } = req.query;
   
+  // Your paid product ID
   const PAID_PRODUCT_ID = 'prod_1vgh0MwjNAYGN';
   
   if (!license) {
@@ -8,36 +9,54 @@ export default async function handler(req, res) {
   }
 
   try {
-    // NEW: Search for specific license key
-    const response = await fetch(
-      `https://api.whop.com/api/v2/memberships?license_key=${encodeURIComponent(license)}&per=1`,
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.WHOP_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
+    // Fetch all memberships (we need to search through them)
+    const response = await fetch('https://api.whop.com/api/v2/memberships?per=100', {
+      headers: {
+        'Authorization': `Bearer ${process.env.WHOP_API_KEY}`,
+        'Content-Type': 'application/json'
       }
-    );
+    });
 
     if (!response.ok) {
       console.error('Whop API error:', response.status, response.statusText);
-      return res.status(500).json({ valid: false, error: 'API error' });
+      return res.status(500).json({ 
+        valid: false, 
+        error: 'API error'
+      });
     }
     
     const result = await response.json();
     
-    if (!result.data || !Array.isArray(result.data) || result.data.length === 0) {
-      return res.status(200).json({ 
+    if (!result.data || !Array.isArray(result.data)) {
+      return res.status(500).json({ 
         valid: false, 
-        status: 'not_found',
-        message: 'License key not found. Please reset your license metadata at whop.com/hub if this is an older key.'
+        error: 'Invalid API response'
       });
     }
     
-    const membership = result.data[0];
+    // CRITICAL: Search for EXACT license key match
+    let foundMembership = null;
+    
+    for (const membership of result.data) {
+      // MUST explicitly check license_key matches
+      if (membership.license_key === license) {
+        foundMembership = membership;
+        break;
+      }
+    }
+    
+    // License not found
+    if (!foundMembership) {
+      console.log('License not found:', license);
+      return res.status(200).json({ 
+        valid: false, 
+        status: 'not_found',
+        message: 'License key not found'
+      });
+    }
     
     // CHECK 1: Must be paid product
-    if (membership.product !== PAID_PRODUCT_ID) {
+    if (foundMembership.product !== PAID_PRODUCT_ID) {
       return res.status(200).json({
         valid: false,
         status: 'invalid_product',
@@ -46,23 +65,26 @@ export default async function handler(req, res) {
     }
     
     // CHECK 2: Must have valid status
-    const isValid = membership.valid === true && 
-                   (membership.status === 'completed' || 
-                    membership.status === 'active' ||
-                    membership.status === 'trialing');
+    const isValid = foundMembership.valid === true && 
+                   (foundMembership.status === 'completed' || 
+                    foundMembership.status === 'active' ||
+                    foundMembership.status === 'trialing');
     
     return res.status(200).json({
       valid: isValid,
-      status: membership.status,
-      userId: membership.user,
-      productId: membership.product,
-      expiresAt: membership.expires_at,
-      membershipId: membership.id,
-      email: membership.email
+      status: foundMembership.status,
+      userId: foundMembership.user,
+      productId: foundMembership.product,
+      expiresAt: foundMembership.expires_at,
+      membershipId: foundMembership.id,
+      email: foundMembership.email
     });
     
   } catch (error) {
     console.error('Validation error:', error.message);
-    return res.status(500).json({ valid: false, error: 'Validation failed' });
+    return res.status(500).json({ 
+      valid: false, 
+      error: 'Validation failed'
+    });
   }
 }
