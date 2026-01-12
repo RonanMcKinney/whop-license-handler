@@ -1,7 +1,5 @@
 export default async function handler(req, res) {
   const { license } = req.query;
-  
-  // Your paid product ID
   const PAID_PRODUCT_ID = 'prod_1vgh0MwjNAYGN';
   
   if (!license) {
@@ -9,45 +7,45 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Fetch all memberships (we need to search through them)
-    const response = await fetch('https://api.whop.com/api/v2/memberships?per=100', {
-      headers: {
-        'Authorization': `Bearer ${process.env.WHOP_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
+    // Fetch all memberships with pagination
+    let allMemberships = [];
+    let page = 1;
+    let hasMore = true;
 
-    if (!response.ok) {
-      console.error('Whop API error:', response.status, response.statusText);
-      return res.status(500).json({ 
-        valid: false, 
-        error: 'API error'
-      });
-    }
-    
-    const result = await response.json();
-    
-    if (!result.data || !Array.isArray(result.data)) {
-      return res.status(500).json({ 
-        valid: false, 
-        error: 'Invalid API response'
-      });
-    }
-    
-    // CRITICAL: Search for EXACT license key match
-    let foundMembership = null;
-    
-    for (const membership of result.data) {
-      // MUST explicitly check license_key matches
-      if (membership.license_key === license) {
-        foundMembership = membership;
-        break;
+    while (hasMore && page <= 5) { // Max 5 pages = 500 memberships
+      const response = await fetch(
+        `https://api.whop.com/v2/memberships?product_ids=${PAID_PRODUCT_ID}&per=100&page=${page}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${process.env.WHOP_API_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (!response.ok) {
+        return res.status(500).json({ valid: false, error: 'API error' });
+      }
+      
+      const result = await response.json();
+      
+      if (result.data && result.data.length > 0) {
+        allMemberships = allMemberships.concat(result.data);
+        
+        if (result.pagination && result.pagination.current_page < result.pagination.total_pages) {
+          page++;
+        } else {
+          hasMore = false;
+        }
+      } else {
+        hasMore = false;
       }
     }
     
-    // License not found
+    // Find matching license
+    const foundMembership = allMemberships.find(m => m.license_key === license);
+    
     if (!foundMembership) {
-      console.log('License not found:', license);
       return res.status(200).json({ 
         valid: false, 
         status: 'not_found',
@@ -55,7 +53,7 @@ export default async function handler(req, res) {
       });
     }
     
-    // CHECK 1: Must be paid product
+    // Check if paid product
     if (foundMembership.product !== PAID_PRODUCT_ID) {
       return res.status(200).json({
         valid: false,
@@ -64,7 +62,7 @@ export default async function handler(req, res) {
       });
     }
     
-    // CHECK 2: Must have valid status
+    // Check valid status
     const isValid = foundMembership.valid === true && 
                    (foundMembership.status === 'completed' || 
                     foundMembership.status === 'active' ||
@@ -81,7 +79,6 @@ export default async function handler(req, res) {
     });
     
   } catch (error) {
-    console.error('Validation error:', error.message);
     return res.status(500).json({ 
       valid: false, 
       error: 'Validation failed'
