@@ -1,102 +1,78 @@
 export default async function handler(req, res) {
-  res.setHeader('Content-Type', 'application/json');
-  
-  const PAID_PRODUCT_ID = 'prod_1vgh0MwjNAYGN';
-  const WHOP_API_KEY = process.env.WHOP_API_KEY;
+  res.setHeader("Content-Type", "application/json");
+
+  const PRODUCT_ID = "prod_1vgh0MwjNAYGN";
+  const WHOP_API_KEY = process.env.WHOP_API_KEY; // MUST be the APP API key
 
   if (!WHOP_API_KEY) {
-    return res.status(500).json({ error: 'WHOP_API_KEY not configured' });
+    return res.status(500).json({ error: "WHOP_API_KEY not configured" });
   }
 
   try {
-    // Step 1: Fetch memberships - CORRECT URL (no /api)
-    const response = await fetch(
-      `https://api.whop.com/v2/memberships?product_ids=${PAID_PRODUCT_ID}`,
+    // 1) List memberships for product
+    const listResp = await fetch(
+      `https://api.whop.com/api/v2/memberships?product_ids=${encodeURIComponent(PRODUCT_ID)}`,
       {
         headers: {
-          'Authorization': `Bearer ${WHOP_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
+          Authorization: `Bearer ${WHOP_API_KEY}`,
+          "Content-Type": "application/json",
+        },
       }
     );
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      return res.status(500).json({ 
-        error: 'Failed to fetch memberships',
-        status: response.status,
-        details: errorText
+    const listText = await listResp.text();
+    let listJson;
+    try { listJson = JSON.parse(listText); } catch { listJson = null; }
+
+    if (!listResp.ok) {
+      return res.status(listResp.status).json({
+        error: "Failed to list memberships",
+        status: listResp.status,
+        response: listJson ?? listText,
       });
     }
 
-    const result = await response.json();
-    
-    if (!result.data || result.data.length === 0) {
-      return res.status(200).json({ 
-        message: 'No memberships found for this product',
-        productId: PAID_PRODUCT_ID
-      });
+    const memberships = Array.isArray(listJson?.data) ? listJson.data : [];
+    if (memberships.length === 0) {
+      return res.status(200).json({ message: "No memberships found", productId: PRODUCT_ID });
     }
 
-    // Step 2: Reset metadata - CORRECT URL (no /api)
+    // 2) Patch each membership metadata -> {}
     const results = [];
-    
-    for (const membership of result.data) {
-      try {
-        const patchResponse = await fetch(
-          `https://api.whop.com/v2/memberships/${membership.id}`,
-          {
-            method: 'PATCH',
-            headers: {
-              'Authorization': `Bearer ${WHOP_API_KEY}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ metadata: {} })
-          }
-        );
+    for (const m of memberships) {
+      const updResp = await fetch(`https://api.whop.com/api/v2/memberships/${m.id}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${WHOP_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ metadata: {} }),
+      });
 
-        const responseText = await patchResponse.text();
-        let responseData;
-        try {
-          responseData = JSON.parse(responseText);
-        } catch {
-          responseData = responseText;
-        }
+      const updText = await updResp.text();
+      let updJson;
+      try { updJson = JSON.parse(updText); } catch { updJson = null; }
 
-        results.push({
-          license: membership.license_key,
-          membershipId: membership.id,
-          success: patchResponse.ok,
-          status: patchResponse.status,
-          response: patchResponse.ok ? 'SUCCESS' : responseData
-        });
+      results.push({
+        membershipId: m.id,
+        license: m.license_key,
+        success: updResp.ok,
+        status: updResp.status,
+        response: updJson ?? updText,
+      });
 
-        await new Promise(resolve => setTimeout(resolve, 300));
-
-      } catch (err) {
-        results.push({
-          license: membership.license_key,
-          membershipId: membership.id,
-          success: false,
-          error: err.message
-        });
-      }
+      await new Promise((r) => setTimeout(r, 250));
     }
 
-    const successCount = results.filter(r => r.success).length;
-
+    const successful = results.filter((r) => r.success).length;
     return res.status(200).json({
-      message: successCount > 0 ? '🎉 Metadata reset successful!' : 'All updates failed',
-      totalProcessed: result.data.length,
-      successful: successCount,
-      failed: result.data.length - successCount,
-      results: results
+      message: successful > 0 ? "Metadata reset completed" : "All updates failed",
+      totalProcessed: results.length,
+      successful,
+      failed: results.length - successful,
+      results,
     });
-
-  } catch (error) {
-    return res.status(500).json({ 
-      error: 'Fatal error',
-      message: error.message
-    });
+  } catch (e) {
+    return res.status(500).json({ error: "Fatal error", message: e.message });
   }
 }
