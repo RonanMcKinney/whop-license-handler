@@ -2,60 +2,75 @@ export default async function handler(req, res) {
   res.setHeader('Content-Type', 'application/json');
   
   const { license } = req.query;
+  const PAID_PRODUCT_ID = 'prod_1vgh0MwjNAYGN';
   const WHOP_API_KEY = process.env.WHOP_API_KEY;
 
   if (!license) {
-    return res.status(400).json({ 
-      valid: false, 
-      error: 'License key required' 
-    });
-  }
-
-  if (!WHOP_API_KEY) {
-    return res.status(500).json({ 
-      valid: false, 
-      error: 'API key not configured' 
-    });
+    return res.status(400).json({ valid: false, error: 'License key required' });
   }
 
   try {
-    // Use Whop's dedicated license validation endpoint
-    const response = await fetch(
-      `https://api.whop.com/api/v2/memberships/${encodeURIComponent(license)}/validate_license`,
-      {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${WHOP_API_KEY}`,
-          'Content-Type': 'application/json'
+    // Fetch all paid memberships with pagination
+    let allMemberships = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore && page <= 10) { // Max 10 pages = 1000 members
+      const response = await fetch(
+        `https://api.whop.com/v2/memberships?product_ids=${PAID_PRODUCT_ID}&per=100&page=${page}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${WHOP_API_KEY}`,
+            'Content-Type': 'application/json'
+          }
         }
+      );
+
+      if (!response.ok) {
+        return res.status(200).json({ valid: false, error: 'API error' });
       }
-    );
-
-    const responseText = await response.text();
-    let responseData;
-    try {
-      responseData = JSON.parse(responseText);
-    } catch {
-      responseData = responseText;
+      
+      const result = await response.json();
+      
+      if (result.data && result.data.length > 0) {
+        allMemberships = allMemberships.concat(result.data);
+        
+        if (result.pagination && result.pagination.current_page < result.pagination.total_pages) {
+          page++;
+        } else {
+          hasMore = false;
+        }
+      } else {
+        hasMore = false;
+      }
     }
-
-    // DIAGNOSTIC: Show everything
+    
+    // Find matching license
+    const membership = allMemberships.find(m => m.license_key === license);
+    
+    if (!membership) {
+      return res.status(200).json({ 
+        valid: false, 
+        status: 'not_found'
+      });
+    }
+    
+    // Check if valid
+    const isValid = membership.valid === true && 
+                   (membership.status === 'active' || 
+                    membership.status === 'completed' ||
+                    membership.status === 'trialing');
+    
     return res.status(200).json({
-      diagnostic: true,
-      httpStatus: response.status,
-      httpStatusText: response.statusText,
-      responseBody: responseData,
-      requestUrl: `https://api.whop.com/api/v2/memberships/${license}/validate_license`,
-      apiKeyPrefix: WHOP_API_KEY.substring(0, 10) + '...',
-      note: 'This shows raw API response for debugging'
+      valid: isValid,
+      status: membership.status,
+      userId: membership.user,
+      productId: membership.product,
+      expiresAt: membership.expires_at,
+      email: membership.email
     });
     
   } catch (error) {
-    return res.status(200).json({ 
-      valid: false,
-      status: 'error',
-      message: 'Validation error',
-      errorDetails: error.message
-    });
+    return res.status(200).json({ valid: false, error: 'Validation failed' });
   }
 }
