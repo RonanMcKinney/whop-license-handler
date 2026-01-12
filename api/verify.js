@@ -4,54 +4,76 @@ export default async function handler(req, res) {
   const { license } = req.query;
   const PAID_PRODUCT_ID = 'prod_1vgh0MwjNAYGN';
   const WHOP_API_KEY = process.env.WHOP_API_KEY;
-  const TARGET_LICENSE = 'F-E3B385-3C025E1D-A6D5C7W';
+
+  if (!license) {
+    return res.status(400).json({ valid: false, error: 'License key required' });
+  }
 
   try {
-    // Fetch first page of paid memberships
-    const response = await fetch(
-      `https://api.whop.com/v2/memberships?product_ids=${PAID_PRODUCT_ID}&per=100&page=1`,
-      {
-        headers: {
-          'Authorization': `Bearer ${WHOP_API_KEY}`,
-          'Content-Type': 'application/json'
+    // Search through ALL pages to find the license
+    let page = 1;
+    let foundMembership = null;
+    
+    while (page <= 60 && !foundMembership) { // Max 60 pages based on your data
+      const response = await fetch(
+        `https://api.whop.com/v2/memberships?product_ids=${PAID_PRODUCT_ID}&per=100&page=${page}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${WHOP_API_KEY}`,
+            'Content-Type': 'application/json'
+          }
         }
-      }
-    );
+      );
 
-    if (!response.ok) {
+      if (!response.ok) {
+        return res.status(200).json({ valid: false, error: 'API error' });
+      }
+      
+      const result = await response.json();
+      
+      if (result.data && result.data.length > 0) {
+        // Search this page for the license
+        foundMembership = result.data.find(m => m.license_key === license);
+        
+        if (!foundMembership && result.pagination && page < result.pagination.total_page) {
+          page++;
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+    
+    if (!foundMembership) {
       return res.status(200).json({ 
-        error: 'API call failed',
-        status: response.status
+        valid: false, 
+        status: 'not_found',
+        message: 'License key not found in paid product memberships'
       });
     }
     
-    const result = await response.json();
+    // Check if valid
+    const isValid = foundMembership.valid === true && 
+                   (foundMembership.status === 'active' || 
+                    foundMembership.status === 'completed' ||
+                    foundMembership.status === 'trialing');
     
-    // Find the target license
-    const targetMembership = result.data?.find(m => m.license_key === TARGET_LICENSE);
-    
-    // Get sample of license keys
-    const sampleKeys = result.data?.slice(0, 10).map(m => ({
-      license: m.license_key,
-      status: m.status,
-      valid: m.valid,
-      product: m.product
-    }));
-
     return res.status(200).json({
-      diagnostic: true,
-      totalFound: result.data?.length || 0,
-      pagination: result.pagination,
-      targetLicenseFound: !!targetMembership,
-      targetLicenseData: targetMembership || 'NOT FOUND',
-      sampleLicenses: sampleKeys,
-      queryUsed: `product_ids=${PAID_PRODUCT_ID}`,
-      note: 'Shows what memberships API is actually returning'
+      valid: isValid,
+      status: foundMembership.status,
+      userId: foundMembership.user,
+      productId: foundMembership.product,
+      expiresAt: foundMembership.expires_at,
+      email: foundMembership.email,
+      foundOnPage: page
     });
     
   } catch (error) {
     return res.status(200).json({ 
-      error: error.message
+      valid: false, 
+      error: 'Validation failed',
+      details: error.message
     });
   }
 }
